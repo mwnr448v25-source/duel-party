@@ -162,6 +162,9 @@ body.mobile .invite{flex-direction:column}
 .rtag{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);color:var(--muted);border-radius:99px;padding:4px 14px 4px 4px;font-size:14px;margin-bottom:12px}
 .rtag .mini{width:28px;height:28px;display:inline-block;line-height:28px}
 .rtag .mini svg{filter:none}
+.mrow .route{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-top:2px}
+.ecoline{display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:13px;margin-top:8px;cursor:pointer}
+.ecoline input{margin-top:2px}
 </style>
 </head>
 <body>
@@ -3389,16 +3392,37 @@ function loadPeerJS(){
 const netCodeGen = () => Array.from({length:4}, () => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[randi(31)]).join('');
 function netBroadcast(m){ for (const mb of NET.members) if (mb.conn && mb.conn.open) mb.conn.send(m); }
 function netSend(m){ if (NET.host && NET.host.open) NET.host.send(m); }
-const netInviteLink = () => siteUrl() ? `${siteUrl()}?salon=${NET.code}` : '';
+function netInviteLink(){
+  if (!siteUrl()) return '';
+  const t = getTurn(), extra = t && t.urls ? '&t=' + encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(t))))) : '';
+  return `${siteUrl()}?salon=${NET.code}${extra}`;
+}
+function turnFromLink(){
+  const t = new URLSearchParams(location.search).get('t'); if (!t) return null;
+  try { return JSON.parse(decodeURIComponent(escape(atob(t)))); } catch (e){ return null; }
+}
 function netMembersMsg(){ return {t:'members', code:NET.code, list:NET.members.map(m => ({id:m.id, name:m.name, slot:m.slot}))}; }
 function netApplyNames(){ for (const s of [1,2,3,4]){ const m = NET.members.find(x => x.slot === s); if (m) P[s].name = m.name; } }
 function netUpdate(){ netApplyNames(); netBroadcast(netMembersMsg()); renderNetBtn(); if ($('online').classList.contains('on')) renderOnline(); if (phase === 'menu') renderMenu(); }
 
 // Serveurs qui aident deux appareils à se trouver (STUN) + relais optionnel (TURN) si le réseau bloque la connexion directe
 const getTurn = () => { try { return JSON.parse(localStorage.getItem('duelparty-turn') || 'null'); } catch (e){ return null; } };
+const ecoMode = () => { try { return localStorage.getItem('duelparty-eco') !== '0'; } catch (e){ return true; } };
+const getApiKey = () => { try { return JSON.parse(localStorage.getItem('duelparty-api') || 'null'); } catch (e){ return null; } };
+// Metered : une clé API + le nom de l'app suffisent, le jeu demande les identifiants du relais
+async function fetchTurn(k){
+  const app = (k.app || '').trim().replace(/^https?:\/\//, '').split('.')[0];
+  const r = await fetch(`https://${app}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(k.key.trim())}`);
+  if (!r.ok) throw new Error('Clé refusée (' + r.status + ')');
+  const list = await r.json();
+  const urls = [], cred = {};
+  for (const s of list){ for (const u of [].concat(s.urls || s.url || [])) if (!/^stun:/.test(u)) urls.push(u); if (s.username){ cred.user = s.username; cred.pass = s.credential; } }
+  if (!urls.length || !cred.user) throw new Error('Réponse inattendue du serveur');
+  return {urls:urls.join(', '), user:cred.user, pass:cred.pass};
+}
 function netIce(){
   const ice = [{urls:['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302']}, {urls:'stun:stun.cloudflare.com:3478'}];
-  const t = getTurn();
+  const t = getTurn() || turnFromLink();
   if (t && t.urls) ice.push({urls:t.urls.split(/[\s,]+/).filter(Boolean), username:t.user, credential:t.pass});
   return {config:{iceServers:ice}};
 }
@@ -3406,9 +3430,14 @@ function turnForm(){
   const t = getTurn() || {};
   return `<details class="netadv"${t.urls ? '' : ''}><summary>⚙️ Réglages réseau ${t.urls ? '· relais activé ✅' : '(si tes amis restent bloqués sur « Connexion… »)'}</summary>
     <p class="hint">Si le réseau bloque la connexion directe (souvent en 4G), un <b>serveur relais TURN</b> fait passer la partie. Colle ici les infos de ton relais (compte gratuit sur metered.ca, par exemple). Il suffit que l'ordi qui crée le salon l'ait.</p>
+    <p class="hint">Le plus simple avec <b>metered.ca</b> : colle ta <b>clé API</b> et le nom de ton app, le jeu récupère le reste tout seul à chaque salon. Sinon, recopie les 3 infos du relais plus bas. Dans les deux cas, le relais voyage dans ton lien d'invitation : tes amis n'ont rien à régler.</p>
+    <div class="linkrow"><input class="netin" id="apiApp" placeholder="Nom de l'app (ex : duel-party)" value="${esc((getApiKey() || {}).app || '')}" spellcheck="false"><input class="netin" id="apiKey" placeholder="Clé API Metered" value="${esc((getApiKey() || {}).key || '')}" spellcheck="false"></div>
+    <div class="btnrow" style="justify-content:flex-start;margin-bottom:6px"><button class="rand" id="apiSave">💾 Enregistrer la clé</button><span class="hint" id="apiMsg" style="margin:0"></span></div>
+    <p class="hint" style="margin-top:10px">— ou les infos du relais à la main —</p>
     <input class="netin" id="turnUrls" placeholder="Adresse(s) : turn:…:80, turns:…:443" value="${esc(t.urls || '')}" spellcheck="false">
     <div class="linkrow" style="margin-top:6px"><input class="netin" id="turnUser" placeholder="Identifiant" value="${esc(t.user || '')}" spellcheck="false"><input class="netin" id="turnPass" placeholder="Mot de passe" value="${esc(t.pass || '')}" spellcheck="false"></div>
     <div class="btnrow" style="justify-content:flex-start"><button class="rand" id="turnSave">💾 Enregistrer</button><button class="rand" id="turnTest">🧪 Tester</button><span class="hint" id="turnMsg" style="margin:0"></span></div>
+    <label class="ecoline"><input type="checkbox" id="ecoBox"${ecoMode() ? ' checked' : ''}> Économie de données (image plus douce, consomme ~3 fois moins — recommandé en 4G)</label>
   </details>`;
 }
 function bindTurnForm(){
@@ -3416,6 +3445,17 @@ function bindTurnForm(){
   const read = () => ({urls:$('turnUrls').value.trim(), user:$('turnUser').value.trim(), pass:$('turnPass').value.trim()});
   $('turnSave').onclick = () => { const t = read(); try { if (t.urls) localStorage.setItem('duelparty-turn', JSON.stringify(t)); else localStorage.removeItem('duelparty-turn'); } catch (e){}
     $('turnMsg').textContent = NET.role === 'host' ? '✅ Enregistré. Ferme et recrée le salon pour l\'utiliser.' : '✅ Enregistré.'; };
+  if ($('apiSave')) $('apiSave').onclick = async () => {
+    const k = {app:$('apiApp').value.trim(), key:$('apiKey').value.trim()};
+    if (!k.app || !k.key){ try { localStorage.removeItem('duelparty-api'); } catch (e){} $('apiMsg').textContent = 'Clé effacée.'; return; }
+    $('apiMsg').textContent = '⏳ Vérification…';
+    try {
+      const t = await fetchTurn(k);
+      try { localStorage.setItem('duelparty-api', JSON.stringify(k)); localStorage.setItem('duelparty-turn', JSON.stringify(t)); } catch (e){}
+      $('apiMsg').textContent = '✅ Relais récupéré ! Recrée le salon.'; setTimeout(() => renderOnline(), 1800);
+    } catch (e){ $('apiMsg').textContent = '❌ ' + e.message; }
+  };
+  $('ecoBox').onchange = () => { try { localStorage.setItem('duelparty-eco', $('ecoBox').checked ? '1' : '0'); } catch (e){} $('turnMsg').textContent = '✅ Enregistré. Recrée le salon pour l\'appliquer.'; };
   $('turnTest').onclick = async () => {
     const t = read(); if (!t.urls){ $('turnMsg').textContent = 'Indique d\'abord une adresse.'; return; }
     $('turnMsg').textContent = '⏳ Test en cours…';
@@ -3434,7 +3474,11 @@ function bindTurnForm(){
 
 // ---------- Hôte ----------
 async function netHost(myName){
-  NET.err = ''; renderOnline('wait');
+  NET.err = ''; renderOnline('wait', '📡 Préparation du salon…');
+  const key = getApiKey();
+  if (key && key.key){
+    try { const t = await fetchTurn(key); localStorage.setItem('duelparty-turn', JSON.stringify(t)); } catch (e){ NET.err = 'Relais : ' + e.message + ' (le salon fonctionne quand même en connexion directe)'; }
+  }
   try { await loadPeerJS(); } catch (e){ NET.err = e.message; return renderOnline(); }
   const tryOpen = (n) => {
     const code = netCodeGen(), peer = new Peer(NET_PREFIX + code.toLowerCase(), netIce());
@@ -3454,7 +3498,7 @@ async function netHost(myName){
 }
 function netMakeStream(){
   NET.sc = document.createElement('canvas'); NET.sc.width = 1152; NET.sc.height = 720; NET.sctx = NET.sc.getContext('2d');
-  NET.stream = NET.sc.captureStream(30);
+  NET.stream = NET.sc.captureStream(ecoMode() ? 18 : 26);
   try { AC = AC || new AudioContext(); NET.adest = AC.createMediaStreamDestination(); NET.stream.addTrack(NET.adest.stream.getAudioTracks()[0]); } catch (e){}
 }
 function netOnConnection(conn){
@@ -3466,7 +3510,18 @@ function netOnConnection(conn){
       NET.members.push(mb);
       conn.send({t:'hello', you:conn.peer});
       netUpdate(); netSendUi(conn);
-      if (NET.stream) NET.peer.call(conn.peer, NET.stream);
+      if (NET.stream){
+        const call = NET.peer.call(conn.peer, NET.stream);
+        mb.call = call;
+        setTimeout(() => {
+          try {
+            const sender = call.peerConnection.getSenders().find(x => x.track && x.track.kind === 'video');
+            const prm = sender.getParameters(); prm.encodings = [{maxBitrate:ecoMode() ? 450000 : 1200000, maxFramerate:ecoMode() ? 15 : 24, scaleResolutionDownBy:ecoMode() ? 2 : 1.25}];
+            sender.setParameters(prm);
+          } catch (e){}
+          netCheckRoute(mb);
+        }, 1200);
+      }
       beep(880, .1, 'triangle');
       return;
     }
@@ -3508,14 +3563,28 @@ function netFrame(){
   const now = performance.now();
   if (now - (NET.pvT || 0) > 100){
     NET.pvT = now; const on = !!(game && game.netState && game.online && (phase === 'play' || phase === 'countdown'));
+    NET.pvActive = on;
     for (const mb of NET.members) if (mb.conn && mb.conn.open){
       if (on){ mb.conn.send({t:'pv', id:gdef.id, s:game.netState(mb.slot)}); mb.pv = true; }
       else if (mb.pv){ mb.conn.send({t:'pv', off:true}); mb.pv = false; }
     }
   }
+  if (NET.pvActive) return;   // écran personnel : rien à diffuser, la vidéo se met en pause toute seule
   const x = NET.sctx; x.fillStyle = '#0b0b14'; x.fillRect(0, 0, 1152, 720);
   if (shown3d) x.drawImage(document.getElementById('c3d'), 0, 0, 1152, 720);
   x.drawImage(cv, 0, 0, 1152, 720);
+}
+async function netCheckRoute(mb){
+  try {
+    const pc = (mb.call && mb.call.peerConnection) || (mb.conn && mb.conn.peerConnection); if (!pc) return;
+    const stats = await pc.getStats(); let pair = null, cands = {};
+    stats.forEach(r => { if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r;
+      if (r.type === 'candidate-pair' && (r.selected || r.state === 'succeeded') && (!pair || r.nominated)) pair = r; });
+    if (!pair) return;
+    const l = cands[pair.localCandidateId], r2 = cands[pair.remoteCandidateId];
+    mb.route = (l && l.candidateType === 'relay') || (r2 && r2.candidateType === 'relay') ? 'relay' : 'direct';
+    renderNetBtn(); if ($('online').classList.contains('on')) renderOnline();
+  } catch (e){}
 }
 function netLeave(){
   try { if (NET.peer) NET.peer.destroy(); } catch (e){}
@@ -3555,6 +3624,7 @@ async function netJoin(code, myName){
       conn.send({t:'join', name:myName});
       $('online').classList.remove('on'); show(null); $('wrap').style.display = 'none'; $('netView').classList.add('on'); $('lobby').classList.add('on'); document.body.classList.add('guest'); renderLobby();
       const v = $('netVideo'); v.muted = false; resize();
+      NET.me = {conn}; setTimeout(() => netCheckRoute(NET.me).then(() => renderLobby()), 1500);
     });
     conn.on('data', m => netGuestData(m));
     conn.on('close', () => { if (NET.role === 'guest'){ netLeave(); NET.err = 'La connexion avec l\'hôte est terminée.'; openOnline(); } });
@@ -3593,6 +3663,7 @@ function renderLobby(){
   $('lobbyCard').innerHTML = `<div class="tag">🌐 Salon ${esc(NET.code)}</div><h2>Connecté !</h2>
     <p class="desc">${me ? `Tu es <b>${SLOT_NAMES[me.slot]}</b>` : ''}</p>
     <div class="mlist">${NET.members.map(m => `<div class="mrow"><b>${esc(m.name)}${m.id === 'host' ? ' 👑' : ''}${m.id === NET.myId ? ' (toi)' : ''}</b><span>${SLOT_NAMES[m.slot]}</span></div>`).join('')}</div>
+    ${NET.me && NET.me.route ? `<p class="hint">${NET.me.route === 'relay' ? '🔁 Connexion via relais' : '⚡ Connexion directe'}</p>` : ''}
     <p class="hint" id="lobbyInfo">L'hôte choisit le jeu… ${MOBILE ? '📱 Utilise la manette en bas de l\'écran (A = action, OK = continuer).' : ''} Tes touches : ${kb('KeyW')}${kb('KeyA')}${kb('KeyS')}${kb('KeyD')} ou flèches · action ${kb('KeyF')} / ⇧ / Entrée · <kbd>Espace</kbd> continuer</p>
     <button class="rand" onclick="netLeave()">🚪 Quitter le salon</button>`;
 }
@@ -3620,7 +3691,7 @@ function renderOnline(state, stage){
         <div class="linkrow"><input id="netSite" placeholder="ex : tonpseudo.github.io/duel-party" spellcheck="false"><button class="rand" id="netSiteOk">Enregistrer</button></div>
         <p class="hint">En attendant, tes amis peuvent aller sur le site, cliquer sur 🌐 En ligne → Rejoindre et taper le code.</p></div>`;
     c.innerHTML = `<h2>🌐 Ton salon</h2><div class="bigcode">${NET.code}</div>${invite}
-      <div class="mlist">${NET.members.map(m => `<div class="mrow"><b>${esc(m.name)}${m.id === 'host' ? ' 👑 (toi)' : ''}</b>
+      <div class="mlist">${NET.members.map(m => `<div class="mrow"><b>${esc(m.name)}${m.id === 'host' ? ' 👑 (toi)' : ''}${m.route ? `<span class="route">${m.route === 'relay' ? '🔁 via relais' : '⚡ connexion directe'}</span>` : ''}</b>
         <select data-id="${m.id}">${[1,2,3,4,0].map(s => `<option value="${s}"${m.slot === s ? ' selected' : ''}>${SLOT_NAMES[s]}</option>`).join('')}</select></div>`).join('')}</div>
       <p class="hint">Les jeux marqués 👥4 se jouent jusqu'à 4. Les autres se jouent entre 🔴 Joueur 1 et 🔵 Joueur 2, les autres regardent. Chacun joue avec ZQSD ou les flèches + F / ⇧ / Entrée.</p>
       <div class="btnrow"><button class="big" id="netClose">✓ Choisir un jeu</button><button class="rand" id="netStop">🛑 Fermer le salon</button></div>${turnForm()}`;
